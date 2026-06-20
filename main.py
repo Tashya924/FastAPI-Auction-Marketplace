@@ -15,9 +15,9 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.security import OAuth2PasswordBearer
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import inspect, text
+from sqlalchemy import inspect, or_, text
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 import models
 import schemas
@@ -367,11 +367,41 @@ def create_auction_with_asset(
 @app.get("/auctions", response_model=list[schemas.AuctionRead])
 def read_auctions(db: Session = Depends(get_db)):
     try:
-        return db.query(models.Auction).all()
+        return (
+            db.query(models.Auction)
+            .options(selectinload(models.Auction.asset), selectinload(models.Auction.bids))
+            .all()
+        )
     except SQLAlchemyError as exc:
         raise HTTPException(status_code=500, detail="Failed to load auctions") from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail="Unexpected error loading auctions") from exc
+
+
+def fetch_completed_auctions(db: Session) -> list[models.Auction]:
+    current_time = utcnow_naive()
+    return (
+        db.query(models.Auction)
+        .options(selectinload(models.Auction.asset), selectinload(models.Auction.bids))
+        .filter(
+            or_(
+                models.Auction.status == "Closed",
+                models.Auction.end_time < current_time,
+            )
+        )
+        .order_by(models.Auction.end_time.desc())
+        .all()
+    )
+
+
+@app.get("/auctions/history", response_model=list[schemas.AuctionRead])
+def read_completed_auctions(db: Session = Depends(get_db)):
+    try:
+        return fetch_completed_auctions(db)
+    except SQLAlchemyError as exc:
+        raise HTTPException(status_code=500, detail="Failed to load auction history") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Unexpected error loading auction history") from exc
 
 
 @app.websocket("/ws/{auction_id}")

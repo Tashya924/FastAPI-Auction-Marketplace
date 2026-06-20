@@ -87,6 +87,14 @@ def load_auctions() -> list[dict]:
         return response.json()
 
 
+@st.cache_data(ttl=5, show_spinner=False)
+def load_completed_auctions() -> list[dict]:
+    with api_client() as client:
+        response = client.get("/auctions/history")
+        response.raise_for_status()
+        return response.json()
+
+
 def parse_auction_end_time(raw_time: object) -> datetime | None:
     if not isinstance(raw_time, str):
         return None
@@ -127,6 +135,47 @@ def resolve_image_url(image_url: object) -> str | None:
         return f"{API_BASE_URL}{image_url}"
 
     return image_url
+
+
+def get_auction_image_url(auction: dict) -> str:
+    asset = auction.get("asset") or {}
+    resolved = resolve_image_url(asset.get("image_url") or auction.get("image_url"))
+    return resolved or "https://via.placeholder.com/640x420?text=No+Image"
+
+
+def get_status_badge(auction: dict, *, history_view: bool = False) -> tuple[str, str]:
+    status = str(auction.get("status") or "Unknown")
+    starting_price = float(auction.get("starting_price") or 0)
+    current_bid = float(auction.get("current_bid") or 0)
+
+    if history_view:
+        if status == "Closed" and current_bid > starting_price:
+            return "Sold", "success"
+        if status == "Closed":
+            return "Expired", "danger"
+        return status, "secondary"
+
+    if status == "Active":
+        return "Active", "info"
+
+    if status == "Closed":
+        return "Closed", "secondary"
+
+    return status, "secondary"
+
+
+def render_status_badge(label: str, tone: str) -> None:
+    colors = {
+        "success": ("#0f5132", "#d1e7dd"),
+        "danger": ("#842029", "#f8d7da"),
+        "info": ("#055160", "#cff4fc"),
+        "secondary": ("#41464b", "#e2e3e5"),
+    }
+    text_color, background = colors.get(tone, colors["secondary"])
+    st.markdown(
+        f"<span style='display:inline-block;padding:0.25rem 0.7rem;border-radius:999px;font-size:0.78rem;font-weight:700;color:{text_color};background:{background};letter-spacing:0.02em;'>{label}</span>",
+        unsafe_allow_html=True,
+    )
 
 def place_bid(auction_id: int, amount: float) -> str:
     with api_client() as client:
@@ -188,78 +237,50 @@ def create_auction_with_asset(
         return "Auction created successfully!"
 
 
-@st.fragment(run_every="1s")
-def render_auction_board() -> None:
-    try:
-        auctions = load_auctions()
-    except Exception as exc:
-        st.error(f"Unable to load auctions: {exc}")
-        return
+def render_auction_card(auction: dict, *, history_view: bool = False) -> None:
+    image_url = get_auction_image_url(auction)
+    badge_label, badge_tone = get_status_badge(auction, history_view=history_view)
+    current_bid = float(auction.get("current_bid") or 0)
+    starting_price = float(auction.get("starting_price") or 0)
+    countdown = get_countdown(auction.get("end_time"))
+    category = ((auction.get("asset") or {}).get("category") or "Uncategorized")
 
-    active_auctions = [auction for auction in auctions if auction.get("status") == "Active"]
+    with st.container(border=True):
+        image_col, info_col, action_col = st.columns([1.2, 2.2, 1])
 
-    if not active_auctions:
-        st.info("No active auctions right now.")
-        return
+        with image_col:
+            st.image(image_url, use_container_width=True, caption=auction["title"])
 
-    for auction in active_auctions:
-        with st.container(border=True):
-            # Create columns for layout
-            img_col, info_col, bid_col = st.columns([1.5, 2, 1])
-            
-            # Image column with clickable popover
-            with img_col:
-                asset = auction.get("asset") or {}
-                # Prefer the asset image from the backend, and normalize relative static paths.
-                image_url = resolve_image_url(asset.get("image_url") or auction.get("image_url"))
-                if image_url is None:
-                    image_url = "https://via.placeholder.com/300?text=No+Image"
-                
-                # Create popover button that displays the image and details
-                with st.popover("🔍 View Details", use_container_width=True):
-                    st.subheader(auction["title"])
-                    
-                    # Display image in popover
-                    try:
-                        st.image(image_url, use_container_width=True, caption=auction["title"])
-                    except Exception:
-                        st.warning("Could not load image")
-                    
-                    # Display full details
-                    st.divider()
-                    st.write("**Description:**")
-                    st.write(auction.get("description") or "No description provided.")
-                    
-                    st.divider()
-                    st.write("**Current Bid:**")
-                    st.metric("Current Price", f"${auction['current_bid']:.2f}")
-                    
-                    st.write("**Starting Price:**")
-                    st.metric("Starting Price", f"${auction['starting_price']:.2f}")
-                    
-                    st.divider()
-                    st.write("**Time Remaining:**")
-                    st.write(get_countdown(auction.get("end_time")))
-                
-                # Thumbnail display below popover button
-                try:
-                    st.image(image_url, use_container_width=True)
-                except Exception:
-                    st.info("📷 Image unavailable")
-            
-            # Info column
-            with info_col:
-                st.subheader(auction["title"])
+            with st.popover("View details", use_container_width=True):
+                st.image(image_url, use_container_width=True, caption=auction["title"])
                 st.write(auction.get("description") or "No description provided.")
-                st.write(f"**Current bid:** ${auction['current_bid']:.2f}")
-                st.write(f"**Starting price:** ${auction['starting_price']:.2f}")
-                st.write(get_countdown(auction.get("end_time")))
-            
-            # Bidding column
-            with bid_col:
+                st.metric("Current bid", f"${current_bid:.2f}")
+                st.metric("Starting price", f"${starting_price:.2f}")
+                st.write(countdown)
+
+        with info_col:
+            st.markdown(f"### {auction['title']}")
+            render_status_badge(badge_label, badge_tone)
+            st.caption(category)
+            st.write(auction.get("description") or "No description provided.")
+
+            meta_left, meta_right = st.columns(2)
+            with meta_left:
+                st.metric("Current bid", f"${current_bid:.2f}")
+            with meta_right:
+                st.metric("Starting price", f"${starting_price:.2f}")
+
+            st.info(countdown)
+
+        with action_col:
+            if history_view:
+                final_label = "Winning bid" if badge_label == "Sold" else "Final state"
+                st.metric(final_label, f"${current_bid:.2f}")
+                st.caption("Completed auctions are read-only.")
+            else:
                 bid_key = f"bid_amount_{auction['id']}"
                 if bid_key not in st.session_state:
-                    st.session_state[bid_key] = float(auction["current_bid"] + 1)
+                    st.session_state[bid_key] = float(current_bid + 1)
 
                 render_bid_feedback(auction["id"])
 
@@ -268,24 +289,35 @@ def render_auction_board() -> None:
                         "Bid amount",
                         key=bid_key,
                         step=1.0,
+                        min_value=float(current_bid + 1),
                     )
                     submit_bid = st.form_submit_button("Place bid", use_container_width=True)
 
                 if submit_bid:
                     if not st.session_state.get("token"):
                         set_bid_feedback(auction["id"], "warning", "Please log in first.")
-                    elif bid_amount <= float(auction["current_bid"]):
+                    elif bid_amount <= current_bid:
                         set_bid_feedback(auction["id"], "error", "Bid must be greater than the current bid.")
                     else:
                         try:
                             message = place_bid(auction["id"], bid_amount)
                             load_auctions.clear()
+                            load_completed_auctions.clear()
                             set_bid_feedback(auction["id"], "success", message)
                         except Exception as exc:
                             set_bid_feedback(auction["id"], "error", f"Bid failed: {exc}")
 
-st.title("Real-Time Auction Dashboard")
-st.caption("FastAPI backend with JWT auth, WebSocket updates, and background auction closing.")
+
+def render_auction_grid(auctions: list[dict], *, history_view: bool = False) -> None:
+    if not auctions:
+        st.info("No auctions to display here yet.")
+        return
+
+    for auction in auctions:
+        render_auction_card(auction, history_view=history_view)
+
+st.title("Marketplace Dashboard")
+st.caption("Browse live listings, review completed history, and sell items with a clean marketplace flow.")
 
 with st.sidebar:
     st.header("Account")
@@ -316,11 +348,22 @@ with st.sidebar:
     else:
         st.info("Log in to place bids.")
 
-# Main content tabs
-tab_browse, tab_sell = st.tabs(["Browse Auctions", "Sell Item"])
+tab_active, tab_history, tab_sell = st.tabs(["Active Auctions", "Completed History", "Sell Item"])
 
-with tab_browse:
-    render_auction_board()
+with tab_active:
+    try:
+        auctions = load_auctions()
+        active_auctions = [auction for auction in auctions if auction.get("status") == "Active"]
+        render_auction_grid(active_auctions)
+    except Exception as exc:
+        st.error(f"Unable to load active auctions: {exc}")
+
+with tab_history:
+    try:
+        completed_auctions = load_completed_auctions()
+        render_auction_grid(completed_auctions, history_view=True)
+    except Exception as exc:
+        st.error(f"Unable to load completed history: {exc}")
 
 with tab_sell:
     st.header("Sell Your Item")
