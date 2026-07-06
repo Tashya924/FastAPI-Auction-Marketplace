@@ -9,7 +9,6 @@ from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, cast
-
 from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -18,7 +17,6 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import inspect, or_, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, selectinload
-
 import models
 import schemas
 from database import SessionLocal, engine, get_db
@@ -320,10 +318,6 @@ def create_auction_with_asset(
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """
-    OLX-style endpoint to create an auction with an asset.
-    Creates an Asset record and links it to a new Auction (1:1 relationship).
-    """
     try:
         # Create Asset
         db_asset = models.Asset(

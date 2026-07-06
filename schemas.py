@@ -64,7 +64,6 @@ class AuctionCreate(BaseModel):
 
 
 class CreateAuctionRequest(BaseModel):
-    """OLX-style form schema for creating an auction with an asset."""
     title: str
     description: str
     category: str

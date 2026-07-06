@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.pyc
+
+# Database
+auction.db
+
+# Benchmark secrets
+benchmark_env.json
+
+# k6
+k6.zip
+k6-v0.52.0-windows-amd64/
+
+# Virtual environment
+.venv/
+env/
+
+
+.pytest_cache/
