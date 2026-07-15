@@ -7,6 +7,138 @@ API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
 
 st.set_page_config(page_title="Real-Time Auction Dashboard", layout="wide")
 
+CUSTOM_CSS = """
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+html, body, [class*="css"] {
+    font-family: 'Inter', sans-serif;
+}
+
+/* Premium background */
+.stApp {
+    background: #f8fafc;
+}
+
+/* Hide header/footer */
+#MainMenu {visibility: hidden;}
+header {visibility: hidden;}
+footer {visibility: hidden;}
+
+/* Modern Card styling for containers */
+div[data-testid="stVerticalBlockBorderWrapper"] {
+    border: none !important;
+    border-radius: 16px !important;
+    background: white !important;
+    box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.05) !important;
+    transition: transform 0.2s ease, box-shadow 0.2s ease !important;
+}
+div[data-testid="stVerticalBlockBorderWrapper"]:hover {
+    transform: translateY(-4px) !important;
+    box-shadow: 0 12px 24px -4px rgba(0, 0, 0, 0.1) !important;
+}
+
+/* Titles and Typography */
+h1, h2, h3 {
+    color: #0f172a !important;
+    font-weight: 700 !important;
+    letter-spacing: -0.02em !important;
+}
+p {
+    color: #475569 !important;
+}
+
+/* Refined inputs & buttons */
+.stButton > button {
+    border-radius: 8px !important;
+    transition: all 0.2s ease !important;
+    font-weight: 600 !important;
+}
+.stButton > button:hover {
+    transform: scale(1.02) !important;
+}
+button[kind="primary"] {
+    background: #1e3a8a !important; /* Dark Blue */
+    color: white !important;
+    border: none !important;
+    box-shadow: 0 4px 14px 0 rgba(30, 58, 138, 0.3) !important;
+}
+button[kind="secondary"] {
+    background: white !important;
+    border: 1px solid #e2e8f0 !important;
+    color: #334155 !important;
+}
+
+/* Forms & Inputs */
+div[data-baseweb="input"] > div {
+    border-radius: 8px !important;
+    border-color: #e2e8f0 !important;
+    background: #f8fafc !important;
+}
+div[data-baseweb="input"] > div:focus-within {
+    border-color: #3b82f6 !important;
+    box-shadow: 0 0 0 1px #3b82f6 !important;
+}
+
+/* Metrics */
+[data-testid="stMetricValue"] {
+    font-size: 1.5rem !important;
+    font-weight: 700 !important;
+    color: #1e293b !important;
+}
+[data-testid="stMetricLabel"] {
+    font-size: 0.75rem !important;
+    color: #64748b !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.05em !important;
+    font-weight: 600 !important;
+}
+
+/* Countdowns */
+.countdown-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.5rem 1rem;
+    border-radius: 8px;
+    background: #f1f5f9;
+    color: #334155;
+    font-size: 0.875rem;
+    font-weight: 600;
+    margin-top: 0.5rem;
+    border: 1px solid #e2e8f0;
+}
+</style>
+"""
+st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
+
+import streamlit.components.v1 as components
+components.html("""
+<script>
+setInterval(() => {
+    const parent = window.parent.document;
+    const badges = parent.querySelectorAll('.countdown-badge');
+    badges.forEach(badge => {
+        const endTimeStr = badge.getAttribute('data-endtime');
+        if (!endTimeStr) return;
+        const safeStr = endTimeStr.endsWith('Z') || endTimeStr.includes('+') ? endTimeStr : endTimeStr + 'Z';
+        const endTime = new Date(safeStr).getTime();
+        const now = new Date().getTime();
+        const diff = Math.floor((endTime - now) / 1000);
+        const textSpan = badge.querySelector('.countdown-text');
+        if (!textSpan) return;
+        if (diff <= 0) {
+            textSpan.innerText = "Status: Auction ended";
+        } else {
+            const h = Math.floor(diff / 3600);
+            const m = Math.floor((diff % 3600) / 60);
+            const s = diff % 60;
+            textSpan.innerText = `Ends in: ${h}h ${m}m ${s}s`;
+        }
+    });
+}, 1000);
+</script>
+""", height=0)
+
 def auth_headers() -> dict[str, str]:
     token = st.session_state.get("token")
     if not token:
@@ -178,14 +310,14 @@ def get_status_badge(auction: dict, *, history_view: bool = False) -> tuple[str,
 
 def render_status_badge(label: str, tone: str) -> None:
     colors = {
-        "success": ("#0f5132", "#d1e7dd"),
-        "danger": ("#842029", "#f8d7da"),
-        "info": ("#055160", "#cff4fc"),
-        "secondary": ("#41464b", "#e2e3e5"),
+        "success": ("#166534", "#dcfce7"),
+        "danger": ("#991b1b", "#fee2e2"),
+        "info": ("#1e40af", "#dbeafe"),
+        "secondary": ("#334155", "#f1f5f9"),
     }
     text_color, background = colors.get(tone, colors["secondary"])
     st.markdown(
-        f"<span style='display:inline-block;padding:0.25rem 0.7rem;border-radius:999px;font-size:0.78rem;font-weight:700;color:{text_color};background:{background};letter-spacing:0.02em;'>{label}</span>",
+        f"<span style='display:inline-block;padding:0.35rem 0.8rem;border-radius:9999px;font-size:0.75rem;font-weight:600;color:{text_color};background:{background};letter-spacing:0.025em;text-transform:uppercase;box-shadow:0 1px 2px 0 rgba(0,0,0,0.05);'>{label}</span>",
         unsafe_allow_html=True,
     )
 
@@ -255,16 +387,17 @@ def render_auction_card(auction: dict, *, history_view: bool = False) -> None:
     current_bid = float(auction.get("current_bid") or 0)
     starting_price = float(auction.get("starting_price") or 0)
     countdown = get_countdown(auction.get("end_time"))
+    end_time_str = auction.get("end_time", "")
     category = ((auction.get("asset") or {}).get("category") or "Uncategorized")
 
     with st.container(border=True):
-        image_col, info_col, action_col = st.columns([1.2, 2.2, 1])
+        image_col, info_col, action_col = st.columns([1, 2.5, 0.8])
 
         with image_col:
-            st.image(image_url, use_container_width=True, caption=auction["title"])
+            st.image(image_url, width="stretch", caption=auction["title"])
 
-            with st.popover("View details", use_container_width=True):
-                st.image(image_url, use_container_width=True, caption=auction["title"])
+            with st.popover("View details"):
+                st.image(image_url, width="stretch", caption=auction["title"])
                 st.write(auction.get("description") or "No description provided.")
                 st.metric("Current bid", f"${current_bid:.2f}")
                 st.metric("Starting price", f"${starting_price:.2f}")
@@ -282,7 +415,7 @@ def render_auction_card(auction: dict, *, history_view: bool = False) -> None:
             with meta_right:
                 st.metric("Starting price", f"${starting_price:.2f}")
 
-            st.info(countdown)
+            st.markdown(f"<div class='countdown-badge' data-endtime='{end_time_str}'>⏳ <span class='countdown-text'>{countdown}</span></div>", unsafe_allow_html=True)
 
         with action_col:
             if history_view:
@@ -292,7 +425,7 @@ def render_auction_card(auction: dict, *, history_view: bool = False) -> None:
             else:
                 st.metric("Current bid", f"${current_bid:.2f}")
             
-            if st.button("Open", key=f"open_auction_{auction['id']}", use_container_width=True):
+            if st.button("Open", key=f"open_auction_{auction['id']}", type="primary"):
                 st.session_state["selected_auction_id"] = auction["id"]
                 st.rerun()
 
@@ -331,6 +464,7 @@ def render_dedicated_auction_page(auction_id: int) -> None:
     current_bid = float(auction.get("current_bid") or 0)
     starting_price = float(auction.get("starting_price") or 0)
     countdown = get_countdown(auction.get("end_time"))
+    end_time_str = auction.get("end_time", "")
     category = ((auction.get("asset") or {}).get("category") or "Uncategorized")
     status = auction.get("status")
     history_view = status == "Closed"
@@ -340,13 +474,13 @@ def render_dedicated_auction_page(auction_id: int) -> None:
     
     col1, col2 = st.columns([1.5, 1])
     with col1:
-        st.image(image_url, use_container_width=True, caption=auction["title"])
+        st.image(image_url, width="stretch", caption=auction["title"])
         st.write(auction.get("description") or "No description provided.")
     
     with col2:
         render_status_badge(badge_label, badge_tone)
         st.caption(category)
-        st.write(countdown)
+        st.markdown(f"<div class='countdown-badge' data-endtime='{end_time_str}' style='margin-bottom:1rem;'>⏳ <span class='countdown-text'>{countdown}</span></div>", unsafe_allow_html=True)
         
         is_ended = countdown.startswith("Status: Auction ended") or status == "Closed"
         
@@ -354,12 +488,42 @@ def render_dedicated_auction_page(auction_id: int) -> None:
         ws_url = API_BASE_URL.replace("http://", "ws://").replace("https://", "wss://") + f"/ws/{auction_id}"
         rest_url = f"{API_BASE_URL}/auctions"
         html_code = f"""
-        <div style="font-family: sans-serif; padding: 1rem; border-radius: 0.5rem; background: rgba(128, 128, 128, 0.1); margin-bottom: 1rem;">
+        <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@600;800&display=swap');
+        .live-bid-panel {{
+            font-family: 'Inter', sans-serif;
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            color: white;
+            border-radius: 16px;
+            padding: 1.5rem;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.2);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            margin-bottom: 1rem;
+        }}
+        .live-bid-label {{
+            font-size: 0.75rem;
+            color: #94a3b8;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            font-weight: 600;
+        }}
+        .live-bid-value {{
+            font-size: 3rem;
+            font-weight: 800;
+            letter-spacing: -0.02em;
+            background: linear-gradient(to right, #60a5fa, #3b82f6);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            line-height: 1.2;
+            margin-top: 0.5rem;
+        }}
+        </style>
+        <div class="live-bid-panel">
             <div style="display: flex; justify-content: space-between; align-items: center;">
-                <div style="font-size: 0.875rem; color: inherit;">Live Current bid</div>
-                <div id="ws-status" style="font-size: 0.75rem; font-weight: bold; color: #ff4b4b;">🔴 Connecting...</div>
+                <div class="live-bid-label">Live Current bid</div>
+                <div id="ws-status" style="font-size: 0.75rem; font-weight: 700; padding: 0.25rem 0.6rem; border-radius: 999px; background: rgba(0,0,0,0.2); color: #ff4b4b;">🔴 Connecting...</div>
             </div>
-            <div id="live-bid-value" style="font-size: 2rem; font-weight: bold; margin-top: 0.25rem;">Loading...</div>
+            <div id="live-bid-value" class="live-bid-value">Loading...</div>
         </div>
         <script>
             const auctionId = {auction_id};
@@ -446,7 +610,7 @@ def render_dedicated_auction_page(auction_id: int) -> None:
         </script>
         """
         import streamlit.components.v1 as components
-        components.html(html_code, height=140)
+        components.html(html_code, height=180)
 
         if is_ended:
             st.error("This auction is closed. Bidding is disabled.")
@@ -464,7 +628,7 @@ def render_dedicated_auction_page(auction_id: int) -> None:
                     step=1.0,
                     min_value=float(current_bid + 1),
                 )
-                submit_bid = st.form_submit_button("Place bid", use_container_width=True)
+                submit_bid = st.form_submit_button("Place bid", use_container_width=True, type="primary")
 
             if submit_bid:
                 if not st.session_state.get("token"):
@@ -581,7 +745,7 @@ with tab_sell:
                 )
                 if uploaded_file is not None:
                     # Show preview of uploaded image
-                    st.image(uploaded_file, caption="Image Preview", use_container_width=True)
+                    st.image(uploaded_file, caption="Image Preview", width="stretch")
             else:
                 image_url = st.text_input(
                     "Image URL",
@@ -590,7 +754,7 @@ with tab_sell:
                 )
                 if image_url:
                     try:
-                        st.image(image_url, caption="Image Preview", use_container_width=True)
+                        st.image(image_url, caption="Image Preview", width="stretch")
                     except Exception:
                         st.warning("Could not load image from URL")
             
@@ -604,7 +768,7 @@ with tab_sell:
             )
             
             # Submit button
-            submit_auction = st.form_submit_button("Create Auction", use_container_width=True)
+            submit_auction = st.form_submit_button("Create Auction", use_container_width=True, type="primary")
             
             if submit_auction:
                 # Validation
