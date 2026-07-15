@@ -62,13 +62,21 @@ def register_user(username: str, email: str, password: str) -> str:
             error_message = parse_api_error(response)
             if error_message in {"Email already registered", "Username already taken"}:
                 login_response = client.post("/login", json={"username": username, "password": password})
+                if login_response.status_code == 401:
+                    raise Exception("Account already exists, but the password provided is incorrect.")
                 login_response.raise_for_status()
                 token = login_response.json()["access_token"]
                 st.session_state["token"] = token
                 st.session_state["username"] = username
                 return "Account already existed. Logged you in."
         response.raise_for_status()
-        return "Registration successful. You can now log in."
+        
+        login_response = client.post("/login", json={"username": username, "password": password})
+        login_response.raise_for_status()
+        st.session_state["token"] = login_response.json()["access_token"]
+        st.session_state["username"] = username
+        
+        return "Registration successful. You have been logged in."
 
 def login_user(username: str, password: str) -> str:
     with api_client() as client:
@@ -278,34 +286,11 @@ def render_auction_card(auction: dict, *, history_view: bool = False) -> None:
                 st.metric(final_label, f"${current_bid:.2f}")
                 st.caption("Completed auctions are read-only.")
             else:
-                bid_key = f"bid_amount_{auction['id']}"
-                if bid_key not in st.session_state:
-                    st.session_state[bid_key] = float(current_bid + 1)
-
-                render_bid_feedback(auction["id"])
-
-                with st.form(f"bid_form_{auction['id']}"):
-                    bid_amount = st.number_input(
-                        "Bid amount",
-                        key=bid_key,
-                        step=1.0,
-                        min_value=float(current_bid + 1),
-                    )
-                    submit_bid = st.form_submit_button("Place bid", use_container_width=True)
-
-                if submit_bid:
-                    if not st.session_state.get("token"):
-                        set_bid_feedback(auction["id"], "warning", "Please log in first.")
-                    elif bid_amount <= current_bid:
-                        set_bid_feedback(auction["id"], "error", "Bid must be greater than the current bid.")
-                    else:
-                        try:
-                            message = place_bid(auction["id"], bid_amount)
-                            load_auctions.clear()
-                            load_completed_auctions.clear()
-                            set_bid_feedback(auction["id"], "success", message)
-                        except Exception as exc:
-                            set_bid_feedback(auction["id"], "error", f"Bid failed: {exc}")
+                st.metric("Current bid", f"${current_bid:.2f}")
+            
+            if st.button("Open", key=f"open_auction_{auction['id']}", use_container_width=True):
+                st.session_state["selected_auction_id"] = auction["id"]
+                st.rerun()
 
 
 def render_auction_grid(auctions: list[dict], *, history_view: bool = False) -> None:
@@ -315,6 +300,106 @@ def render_auction_grid(auctions: list[dict], *, history_view: bool = False) -> 
 
     for auction in auctions:
         render_auction_card(auction, history_view=history_view)
+
+def render_dedicated_auction_page(auction_id: int) -> None:
+    try:
+        auctions = load_auctions()
+        auction = next((a for a in auctions if a["id"] == auction_id), None)
+        if not auction:
+            auctions = load_completed_auctions()
+            auction = next((a for a in auctions if a["id"] == auction_id), None)
+            
+        if not auction:
+            st.error("Auction not found.")
+            if st.button("Back to Dashboard"):
+                del st.session_state["selected_auction_id"]
+                st.rerun()
+            return
+    except Exception as exc:
+        st.error(f"Failed to load auction data: {exc}")
+        return
+
+    if st.button("← Back to Dashboard"):
+        del st.session_state["selected_auction_id"]
+        st.rerun()
+
+    image_url = get_auction_image_url(auction)
+    current_bid = float(auction.get("current_bid") or 0)
+    starting_price = float(auction.get("starting_price") or 0)
+    countdown = get_countdown(auction.get("end_time"))
+    category = ((auction.get("asset") or {}).get("category") or "Uncategorized")
+    status = auction.get("status")
+    history_view = status == "Closed"
+    badge_label, badge_tone = get_status_badge(auction, history_view=history_view)
+
+    st.markdown(f"## {auction['title']}")
+    
+    col1, col2 = st.columns([1.5, 1])
+    with col1:
+        st.image(image_url, use_container_width=True, caption=auction["title"])
+        st.write(auction.get("description") or "No description provided.")
+    
+    with col2:
+        render_status_badge(badge_label, badge_tone)
+        st.caption(category)
+        st.write(countdown)
+        
+        # Inject WebSocket HTML
+        ws_url = API_BASE_URL.replace("http://", "ws://").replace("https://", "wss://") + f"/ws/{auction_id}"
+        html_code = f"""
+        <div style="font-family: sans-serif; padding: 1rem; border-radius: 0.5rem; background: rgba(128, 128, 128, 0.1); margin-bottom: 1rem;">
+            <div style="font-size: 0.875rem; color: inherit;">Live Current bid</div>
+            <div id="live-bid-value" style="font-size: 2rem; font-weight: bold; margin-top: 0.25rem;">${current_bid:.2f}</div>
+        </div>
+        <script>
+            let ws;
+            function connect() {{
+                ws = new WebSocket("{ws_url}");
+                ws.onmessage = function(event) {{
+                    const data = JSON.parse(event.data);
+                    if (data.current_bid) {{
+                        document.getElementById('live-bid-value').innerText = "$" + parseFloat(data.current_bid).toFixed(2);
+                    }}
+                }};
+                ws.onclose = function() {{
+                    setTimeout(connect, 2000);
+                }};
+            }}
+            connect();
+        </script>
+        """
+        import streamlit.components.v1 as components
+        components.html(html_code, height=120)
+
+        if not history_view:
+            bid_key = f"bid_amount_dedicated_{auction_id}"
+            if bid_key not in st.session_state:
+                st.session_state[bid_key] = float(current_bid + 1)
+
+            render_bid_feedback(auction_id)
+
+            with st.form(f"bid_form_dedicated_{auction_id}"):
+                bid_amount = st.number_input(
+                    "Your Bid Amount",
+                    key=bid_key,
+                    step=1.0,
+                    min_value=float(current_bid + 1),
+                )
+                submit_bid = st.form_submit_button("Place bid", use_container_width=True)
+
+            if submit_bid:
+                if not st.session_state.get("token"):
+                    set_bid_feedback(auction_id, "warning", "Please log in first.")
+                elif bid_amount <= current_bid:
+                    set_bid_feedback(auction_id, "error", "Bid must be greater than the current bid.")
+                else:
+                    try:
+                        message = place_bid(auction_id, bid_amount)
+                        load_auctions.clear()
+                        load_completed_auctions.clear()
+                        set_bid_feedback(auction_id, "success", message)
+                    except Exception as exc:
+                        set_bid_feedback(auction_id, "error", f"Bid failed: {exc}")
 
 st.title("Marketplace Dashboard")
 st.caption("Browse live listings, review completed history, and sell items with a clean marketplace flow.")
@@ -331,6 +416,7 @@ with st.sidebar:
             if register_submit:
                 try:
                     st.success(register_user(reg_username, reg_email, reg_password))
+                    st.rerun()
                 except Exception as exc:
                     st.error(f"Registration failed: {exc}")
     with tab_login:
@@ -347,6 +433,10 @@ with st.sidebar:
         st.success(f"Authenticated as {st.session_state.get('username', 'user')}")
     else:
         st.info("Log in to place bids.")
+
+if "selected_auction_id" in st.session_state:
+    render_dedicated_auction_page(st.session_state["selected_auction_id"])
+    st.stop()
 
 tab_active, tab_history, tab_sell = st.tabs(["Active Auctions", "Completed History", "Sell Item"])
 
@@ -467,5 +557,6 @@ with tab_sell:
                         st.success(message)
                         load_auctions.clear()  # Refresh auction list
                         st.balloons()
+                        st.rerun()
                     except Exception as exc:
                         st.error(f"Failed to create auction: {str(exc)}")

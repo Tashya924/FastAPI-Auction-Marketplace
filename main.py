@@ -176,9 +176,10 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    # Convert errors to string to avoid "bytes is not JSON serializable"
     return JSONResponse(
         status_code=422,
-        content={"error": "Validation error", "details": exc.errors()},
+        content={"error": "Validation error", "details": str(exc.errors())},
     )
 
 
