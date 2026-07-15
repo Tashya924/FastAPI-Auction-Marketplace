@@ -139,10 +139,14 @@ def resolve_image_url(image_url: object) -> str | None:
     if not isinstance(image_url, str) or not image_url.strip():
         return None
 
-    if image_url.startswith("/"):
-        return f"{API_BASE_URL}{image_url}"
+    if image_url.startswith(("http://", "https://")):
+        return image_url
 
-    return image_url
+    base = API_BASE_URL.rstrip("/")
+    if image_url.startswith("/"):
+        return f"{base}{image_url}"
+    else:
+        return f"{base}/{image_url}"
 
 
 def get_auction_image_url(auction: dict) -> str:
@@ -344,34 +348,109 @@ def render_dedicated_auction_page(auction_id: int) -> None:
         st.caption(category)
         st.write(countdown)
         
+        is_ended = countdown.startswith("Status: Auction ended") or status == "Closed"
+        
         # Inject WebSocket HTML
         ws_url = API_BASE_URL.replace("http://", "ws://").replace("https://", "wss://") + f"/ws/{auction_id}"
+        rest_url = f"{API_BASE_URL}/auctions"
         html_code = f"""
         <div style="font-family: sans-serif; padding: 1rem; border-radius: 0.5rem; background: rgba(128, 128, 128, 0.1); margin-bottom: 1rem;">
-            <div style="font-size: 0.875rem; color: inherit;">Live Current bid</div>
-            <div id="live-bid-value" style="font-size: 2rem; font-weight: bold; margin-top: 0.25rem;">${current_bid:.2f}</div>
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div style="font-size: 0.875rem; color: inherit;">Live Current bid</div>
+                <div id="ws-status" style="font-size: 0.75rem; font-weight: bold; color: #ff4b4b;">🔴 Connecting...</div>
+            </div>
+            <div id="live-bid-value" style="font-size: 2rem; font-weight: bold; margin-top: 0.25rem;">Loading...</div>
         </div>
         <script>
+            const auctionId = {auction_id};
+            const wsUrl = "{ws_url}";
+            const restUrl = "{rest_url}";
             let ws;
+            let reconnectAttempts = 0;
+            
+            function updateUI(newBid) {{
+                document.getElementById('live-bid-value').innerText = "$" + newBid.toFixed(2);
+                
+                const parent = window.parent.document;
+                
+                // Update metrics if present
+                const labels = parent.querySelectorAll('[data-testid="stMetricLabel"]');
+                labels.forEach(label => {{
+                    if (label.textContent.includes('Current bid') || label.textContent.includes('Winning bid') || label.textContent.includes('Final state')) {{
+                        const valueEl = label.parentElement.querySelector('[data-testid="stMetricValue"]');
+                        if (valueEl) valueEl.textContent = "$" + newBid.toFixed(2);
+                    }}
+                }});
+                
+                // Update number input and validation
+                const numberInputs = parent.querySelectorAll('input[type="number"]');
+                numberInputs.forEach(input => {{
+                    const ariaLabel = input.getAttribute('aria-label');
+                    if (ariaLabel && ariaLabel.includes('Your Bid Amount')) {{
+                        const minBid = newBid + 1;
+                        input.min = minBid;
+                        input.setAttribute('aria-valuemin', minBid);
+                        if (parseFloat(input.value) < minBid) {{
+                            input.value = minBid;
+                            
+                            // Trigger react updates
+                            const event = new Event('input', {{ bubbles: true }});
+                            let tracker = input._valueTracker;
+                            if (tracker) tracker.setValue(input.value);
+                            input.dispatchEvent(event);
+                        }}
+                    }}
+                }});
+            }}
+
+            function fetchInitial() {{
+                fetch(restUrl)
+                    .then(r => r.json())
+                    .then(data => {{
+                        const auction = Array.isArray(data) ? data.find(a => a.id === auctionId) : null;
+                        if (auction) updateUI(parseFloat(auction.current_bid));
+                    }})
+                    .catch(console.error);
+            }}
+
             function connect() {{
-                ws = new WebSocket("{ws_url}");
+                document.getElementById('ws-status').innerText = "🔴 Connecting...";
+                document.getElementById('ws-status').style.color = "#ff4b4b";
+                
+                ws = new WebSocket(wsUrl);
+                
+                ws.onopen = function() {{
+                    document.getElementById('ws-status').innerText = "🟢 Live";
+                    document.getElementById('ws-status').style.color = "#00cc66";
+                    reconnectAttempts = 0;
+                    fetchInitial();
+                }};
+                
                 ws.onmessage = function(event) {{
                     const data = JSON.parse(event.data);
                     if (data.current_bid) {{
-                        document.getElementById('live-bid-value').innerText = "$" + parseFloat(data.current_bid).toFixed(2);
+                        updateUI(parseFloat(data.current_bid));
                     }}
                 }};
+                
                 ws.onclose = function() {{
-                    setTimeout(connect, 2000);
+                    document.getElementById('ws-status').innerText = "🔴 Reconnecting...";
+                    document.getElementById('ws-status').style.color = "#ff4b4b";
+                    let delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
+                    reconnectAttempts++;
+                    setTimeout(connect, delay);
                 }};
             }}
+            
             connect();
         </script>
         """
         import streamlit.components.v1 as components
-        components.html(html_code, height=120)
+        components.html(html_code, height=140)
 
-        if not history_view:
+        if is_ended:
+            st.error("This auction is closed. Bidding is disabled.")
+        else:
             bid_key = f"bid_amount_dedicated_{auction_id}"
             if bid_key not in st.session_state:
                 st.session_state[bid_key] = float(current_bid + 1)
